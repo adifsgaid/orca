@@ -1,0 +1,380 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Claude Auto-Switch Policy</title>
+<style>
+:root {
+  --bg: #f7f7f5; --panel: #ffffff; --ink: #1c1c1a; --muted: #6b6b66; --line: #e4e4df;
+  --accent: #0f766e; --accent-soft: #d8efec; --warn: #b45309; --warn-soft: #fbecd9;
+  --bad: #b42318; --bad-soft: #fbe3e1; --bar: #ecece7;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #141413; --panel: #1d1d1b; --ink: #ecebe6; --muted: #9b9a93; --line: #2f2f2c;
+    --accent: #2dd4bf; --accent-soft: #123b37; --warn: #f59e0b; --warn-soft: #3a2a10;
+    --bad: #f87171; --bad-soft: #3b1a18; --bar: #2a2a27;
+  }
+}
+:root[data-theme="dark"] {
+    --bg: #141413; --panel: #1d1d1b; --ink: #ecebe6; --muted: #9b9a93; --line: #2f2f2c;
+    --accent: #2dd4bf; --accent-soft: #123b37; --warn: #f59e0b; --warn-soft: #3a2a10;
+    --bad: #f87171; --bad-soft: #3b1a18; --bar: #2a2a27;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font: 14px/1.5 ui-sans-serif, -apple-system, "Segoe UI", system-ui, sans-serif; }
+main { max-width: 1120px; margin: 0 auto; padding: 32px 16px 64px; }
+h1 { font-size: 22px; margin: 0 0 4px; letter-spacing: -0.01em; }
+h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); margin: 32px 0 12px; font-weight: 600; }
+p { margin: 0 0 8px; }
+.tag { display: inline-block; font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 999px; background: var(--warn-soft); color: var(--warn); vertical-align: middle; margin-left: 8px; }
+.question { color: var(--muted); max-width: 760px; }
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px; }
+.row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+button { font: inherit; border: 1px solid var(--line); background: var(--panel); color: var(--ink); border-radius: 8px; padding: 6px 12px; cursor: pointer; }
+button:hover { border-color: var(--accent); }
+button.primary { background: var(--accent); color: var(--panel); border-color: var(--accent); font-weight: 600; }
+button.done { opacity: 0.45; }
+button.next { outline: 2px solid var(--accent); outline-offset: 2px; }
+label.inline { display: inline-flex; gap: 6px; align-items: center; color: var(--muted); }
+input[type=number] { width: 64px; font: inherit; padding: 4px 6px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--ink); }
+select { font: inherit; padding: 3px 6px; border: 1px solid var(--line); border-radius: 6px; background: var(--panel); color: var(--ink); }
+.top { display: grid; grid-template-columns: auto 1fr; gap: 24px; align-items: center; }
+.clock { font-variant-numeric: tabular-nums; font-size: 28px; font-weight: 600; letter-spacing: -0.02em; }
+.verdict { margin-top: 16px; background: var(--accent-soft); border-color: transparent; }
+.verdict.hold { background: var(--bg); border-color: var(--line); }
+.verdict.wait, .verdict.off { background: var(--warn-soft); }
+.verdict .what { font-size: 18px; font-weight: 600; }
+.accounts { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 12px; }
+.acct { position: relative; }
+.acct.active { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+.acct.changed { background: var(--accent-soft); }
+.acct .name { font-weight: 600; font-size: 15px; }
+.badge { font-size: 11px; font-weight: 600; padding: 1px 8px; border-radius: 999px; background: var(--accent); color: var(--panel); margin-left: 6px; }
+.badge.out { background: var(--bar); color: var(--muted); }
+.badge.bad { background: var(--bad-soft); color: var(--bad); }
+.meter { margin: 10px 0 2px; }
+.meter .lbl { display: flex; justify-content: space-between; font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.meter .track { position: relative; height: 8px; background: var(--bar); border-radius: 999px; overflow: hidden; }
+.meter .fill { height: 100%; background: var(--accent); border-radius: 999px; }
+.meter .fill.hot { background: var(--warn); }
+.meter .fill.full { background: var(--bad); }
+.meter .line { position: absolute; top: -2px; bottom: -2px; width: 2px; background: var(--ink); opacity: 0.35; }
+.meter input[type=range] { width: 100%; margin: 2px 0 0; accent-color: var(--accent); }
+.acct .controls { margin-top: 10px; display: flex; flex-wrap: wrap; gap: 6px; }
+.acct .controls button { padding: 3px 9px; font-size: 12px; }
+.tabs { display: flex; flex-wrap: wrap; gap: 4px; border-bottom: 1px solid var(--line); margin-bottom: 12px; }
+.tabs button { border: none; border-bottom: 2px solid transparent; border-radius: 0; background: none; color: var(--muted); padding: 8px 10px; }
+.tabs button.on { color: var(--ink); border-bottom-color: var(--accent); font-weight: 600; }
+.steps { display: flex; flex-direction: column; gap: 6px; align-items: flex-start; margin-top: 12px; }
+.log { max-height: 280px; overflow: auto; font-size: 13px; }
+.log div { padding: 6px 0; border-bottom: 1px solid var(--line); display: grid; grid-template-columns: 56px 1fr; gap: 12px; }
+.log time { color: var(--muted); font-variant-numeric: tabular-nums; }
+.log .sw { color: var(--accent); font-weight: 600; }
+.log .wt { color: var(--warn); font-weight: 600; }
+.rules li { margin-bottom: 4px; }
+@media (max-width: 640px) { .top { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<main>
+  <h1>Auto-switch Claude accounts <span class="tag">PROTOTYPE, throwaway</span></h1>
+  <p class="question"><b>Question:</b> when Orca switches your Claude account for you before a usage limit (like claude-swap's <code>cswap auto</code>), does this policy pick the account you would have picked, never bounce between two accounts, never land on a dead sign-in, and leave a choice you made by hand alone? Push the cases below and watch the verdict.</p>
+
+  <div class="panel" style="margin-top:20px">
+    <div class="top">
+      <div><div class="clock" id="clock"></div><div style="color:var(--muted);font-size:12px">simulated time, checked every minute</div></div>
+      <div>
+        <div class="row">
+          <label class="inline"><input type="checkbox" id="enabled"> Auto-switch on</label>
+          <label class="inline">Switch at <input type="number" id="threshold" min="50" max="99"> %</label>
+          <label class="inline">Must be better by <input type="number" id="margin" min="0" max="50"> pts</label>
+          <label class="inline">Wait <input type="number" id="cooldown" min="0" max="60"> min between switches</label>
+        </div>
+        <div class="row" style="margin-top:10px">
+          <span style="color:var(--muted)">Let time pass:</span>
+          <button data-advance="1">+1 min</button><button data-advance="5">+5 min</button>
+          <button data-advance="30">+30 min</button><button data-advance="60">+1 h</button><button data-advance="300">+5 h</button>
+          <button id="reset">Start over</button>
+        </div>
+      </div>
+    </div>
+    <div class="panel verdict" id="verdict"></div>
+  </div>
+
+  <h2>Accounts</h2>
+  <div class="accounts" id="accounts"></div>
+
+  <h2>Guided walkthroughs</h2>
+  <div class="panel">
+    <div class="tabs" id="tabs"></div>
+    <div id="scenario"></div>
+  </div>
+
+  <h2>What happened</h2>
+  <div class="panel log" id="log"></div>
+
+  <h2>The rules being tested</h2>
+  <div class="panel"><ol class="rules">
+    <li>Nothing moves while the active account is under the line (the tightest of its 5-hour and weekly windows).</li>
+    <li>Only accounts that are in rotation, signed in, readable, and under the line can be picked; the one with the most room left wins.</li>
+    <li>The new account must have at least the margin more room than the current one, so two accounts near the line never trade places.</li>
+    <li>Never go straight back to the account it just left until that account's window has reset.</li>
+    <li>After any switch (automatic or by hand) it waits the cooldown before switching again, so your own pick is respected.</li>
+    <li>At a hard limit (100%) the margin, cooldown and no-going-back rules are dropped: any account with room beats a stopped agent.</li>
+    <li>When every account is over the line, it moves to whichever comes back soonest, but only if that is meaningfully sooner.</li>
+    <li>When every account is out, it waits and names the first one back.</li>
+  </ol></div>
+</main>
+
+<script>
+// ---- Pure policy module: no DOM. Lifts into src/main/claude-accounts as-is. ----
+const AutoSwitchPolicy = (() => {
+  const isReadable = (account) => account.signIn === 'ok' && account.usage !== null
+  const usedPercent = (account) => Math.max(account.usage.fiveHour.percent, account.usage.sevenDay.percent)
+  const windowsOf = (account) => [account.usage.fiveHour, account.usage.sevenDay]
+
+  // When every window at or over the line has reset; 0 when already under it.
+  const backUnderLineAt = (account, threshold) =>
+    Math.max(0, ...windowsOf(account).filter((w) => w.percent >= threshold).map((w) => w.resetsAt))
+
+  const mostRoom = (accounts) =>
+    [...accounts].sort((a, b) => usedPercent(a) - usedPercent(b) || a.usage.sevenDay.resetsAt - b.usage.sevenDay.resetsAt)[0]
+
+  const barredAccountId = (lastSwitch, activeId, now) =>
+    lastSwitch && lastSwitch.by === 'auto' && lastSwitch.to === activeId && now < lastSwitch.fromBackAt ? lastSwitch.from : null
+
+  function decide({ accounts, activeId, settings, lastSwitch, now }) {
+    if (!settings.enabled) return { kind: 'off' }
+    const active = accounts.find((a) => a.id === activeId)
+    if (!isReadable(active)) return { kind: 'hold', reason: 'active-unreadable' }
+    const used = usedPercent(active)
+    if (used < settings.threshold) return { kind: 'hold', reason: 'under-line', used }
+
+    const atLimit = used >= 100
+    const cooldownEndsAt = lastSwitch ? lastSwitch.at + settings.cooldownMinutes : 0
+    if (!atLimit && now < cooldownEndsAt) return { kind: 'hold', reason: 'cooldown', until: cooldownEndsAt }
+
+    const barred = atLimit ? null : barredAccountId(lastSwitch, activeId, now)
+    const pool = accounts.filter((a) => a.id !== activeId && a.id !== barred && a.inRotation && isReadable(a) && usedPercent(a) < 100)
+    const underLine = pool.filter((a) => usedPercent(a) < settings.threshold)
+    const roomy = atLimit ? underLine : underLine.filter((a) => usedPercent(a) <= used - settings.marginPoints)
+
+    const backAt = (a) => backUnderLineAt(a, settings.threshold)
+    const soonestBack = (list) => [...list].sort((a, b) => backAt(a) - backAt(b))[0]
+
+    if (roomy.length) return { kind: 'switch', to: mostRoom(roomy).id, reason: atLimit ? 'limit-hit' : 'most-room' }
+    if (atLimit) {
+      if (pool.length) return { kind: 'switch', to: mostRoom(pool).id, reason: 'any-room-at-limit' }
+      const firstBack = soonestBack(accounts.filter((a) => a.inRotation && isReadable(a)))
+      return { kind: 'wait', reason: 'all-out', firstBack: firstBack.id, at: backAt(firstBack) }
+    }
+    if (underLine.length) return { kind: 'hold', reason: 'not-better-enough', barred }
+
+    const soonest = soonestBack(pool)
+    if (soonest && backAt(soonest) <= backAt(active) - settings.soonerByMinutes)
+      return { kind: 'switch', to: soonest.id, reason: 'soonest-back' }
+    return { kind: 'hold', reason: 'all-over-line', barred }
+  }
+
+  const recordSwitch = ({ accounts, from, to, by, now, threshold }) => ({
+    by, from, to, at: now, fromBackAt: backUnderLineAt(accounts.find((a) => a.id === from), threshold),
+  })
+
+  return { decide, recordSwitch, usedPercent, backUnderLineAt, isReadable }
+})()
+
+// ---- Throwaway page shell below. ----
+const FIVE_HOURS = 300, ONE_WEEK = 10080
+const BASE = new Date('2026-10-12T09:00:00')
+const fmt = (min) => new Date(BASE.getTime() + min * 60000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+const fmtIn = (min) => min <= 0 ? 'now' : min < 60 ? `${min} min` : min < 1440 ? `${Math.floor(min / 60)} h ${min % 60 ? (min % 60) + ' min' : ''}`.trim() : `${Math.floor(min / 1440)} d ${Math.floor((min % 1440) / 60)} h`
+
+const account = (id, label, fiveHour, sevenDay, extra = {}) => ({
+  id, label, inRotation: true, signIn: 'ok',
+  usage: { fiveHour: { percent: fiveHour[0], resetsAt: fiveHour[1] }, sevenDay: { percent: sevenDay[0], resetsAt: sevenDay[1] } },
+  ...extra,
+})
+
+const defaultSettings = () => ({ enabled: true, threshold: 90, marginPoints: 10, cooldownMinutes: 5, soonerByMinutes: 5 })
+
+const freshState = (accounts = [
+  account('work', 'Work Max', [62, 140], [40, 4000]),
+  account('personal', 'Personal Max', [20, 200], [35, 6000]),
+  account('team', 'Team Pro', [50, 90], [70, 2000]),
+], activeId = 'work') => ({ now: 0, activeId, accounts, settings: defaultSettings(), lastSwitch: null, verdict: null, changed: new Set(), log: [] })
+
+let state = freshState()
+
+const labelOf = (id) => state.accounts.find((a) => a.id === id)?.label ?? id
+
+function explain(v) {
+  const s = state.settings
+  switch (v.kind) {
+    case 'off': return ['Auto-switch is off', 'Nothing moves on its own. Switch by hand from the account picker.']
+    case 'switch': return [`Switched to ${labelOf(v.to)}`, {
+      'most-room': `${labelOf(state.lastSwitch.from)} crossed ${s.threshold}%. ${labelOf(v.to)} had the most room left of the accounts under the line.`,
+      'limit-hit': `${labelOf(state.lastSwitch.from)} hit its limit. ${labelOf(v.to)} had the most room left.`,
+      'any-room-at-limit': `${labelOf(state.lastSwitch.from)} hit its limit. Nobody is under the line, but ${labelOf(v.to)} still has room, which beats a stopped agent.`,
+      'soonest-back': `Every account is over ${s.threshold}%. ${labelOf(v.to)} comes back under the line soonest, so its leftover quota gets used before it resets.`,
+    }[v.reason]]
+    case 'hold': return ['Staying put', {
+      'active-unreadable': `Orca can't read ${labelOf(state.activeId)}'s usage (sign-in expired or not fetched yet), so it won't guess.`,
+      'under-line': `${labelOf(state.activeId)} is at ${v.used}%, under the ${s.threshold}% line.`,
+      'cooldown': `Just switched. Waiting until ${fmt(v.until)} before switching again.`,
+      'not-better-enough': `Another account is under the line but not ${s.marginPoints} points better${v.barred ? `, and ${labelOf(v.barred)} was just left` : ''}. Moving would only bounce back.`,
+      'all-over-line': `Every account is over the line and none comes back meaningfully sooner${v.barred ? ` (${labelOf(v.barred)} was just left)` : ''}.`,
+    }[v.reason]]
+    case 'wait': return ['Every account is out', v.firstBack ? `First one back: ${labelOf(v.firstBack)} at ${fmt(v.at)}. Orca switches to it then.` : 'No account can be read. Sign in again.']
+  }
+}
+
+function rollWindows() {
+  for (const a of state.accounts) for (const [key, len] of [['fiveHour', FIVE_HOURS], ['sevenDay', ONE_WEEK]]) {
+    const w = a.usage[key]
+    if (state.now >= w.resetsAt) { w.percent = 0; while (w.resetsAt <= state.now) w.resetsAt += len; state.changed.add(a.id); log(`${a.label}'s ${key === 'fiveHour' ? '5-hour' : 'weekly'} window reset.`) }
+  }
+}
+
+function log(text, cls = '') { state.log.unshift({ at: state.now, text, cls }) }
+
+function check({ quiet = false } = {}) {
+  const v = AutoSwitchPolicy.decide(state)
+  if (v.kind === 'switch') {
+    const from = state.activeId
+    state.lastSwitch = AutoSwitchPolicy.recordSwitch({ accounts: state.accounts, from, to: v.to, by: 'auto', now: state.now, threshold: state.settings.threshold })
+    state.activeId = v.to
+    state.changed.add(from); state.changed.add(v.to)
+  }
+  state.verdict = v
+  const [what, why] = explain(v)
+  const prev = state.lastLogged
+  const key = v.kind + (v.reason ?? '') + (v.to ?? '')
+  if (v.kind === 'switch') log(`${what}. ${why}`, 'sw')
+  else if (!quiet || key !== prev) log(`${what}. ${why}`, v.kind === 'wait' ? 'wt' : '')
+  state.lastLogged = key
+}
+
+const actions = {
+  advance(min) { for (let i = 0; i < min; i++) { state.now += 1; rollWindows(); check({ quiet: true }) } },
+  use(id, points) {
+    const a = state.accounts.find((x) => x.id === id)
+    a.usage.fiveHour.percent = Math.min(100, a.usage.fiveHour.percent + points)
+    a.usage.sevenDay.percent = Math.min(100, a.usage.sevenDay.percent + Math.ceil(points / 4))
+    state.changed.add(id); log(`${a.label} used ${points}% of its 5-hour window.`); check()
+  },
+  set(id, key, percent) { const a = state.accounts.find((x) => x.id === id); a.usage[key].percent = percent; state.changed.add(id); check() },
+  signIn(id, value) { const a = state.accounts.find((x) => x.id === id); a.signIn = value; state.changed.add(id); log(`${a.label}: ${value === 'ok' ? 'signed in' : value === 'expired' ? 'sign-in expired' : 'usage not read yet'}.`); check() },
+  rotation(id) { const a = state.accounts.find((x) => x.id === id); a.inRotation = !a.inRotation; state.changed.add(id); log(`${a.label} ${a.inRotation ? 'back in' : 'taken out of'} rotation.`); check() },
+  pick(id) {
+    if (id === state.activeId) return
+    state.lastSwitch = AutoSwitchPolicy.recordSwitch({ accounts: state.accounts, from: state.activeId, to: id, by: 'user', now: state.now, threshold: state.settings.threshold })
+    state.changed.add(state.activeId); state.changed.add(id); state.activeId = id
+    log(`You switched to ${labelOf(id)} by hand.`, 'sw'); check()
+  },
+  setting(key, value) { state.settings[key] = value; check() },
+}
+
+function act(fn) { state.changed = new Set(); fn(); render() }
+
+// ---- Rendering ----
+const el = (id) => document.getElementById(id)
+function meter(a, key, title) {
+  const w = a.usage[key], t = state.settings.threshold
+  const cls = w.percent >= 100 ? 'full' : w.percent >= t ? 'hot' : ''
+  return `<div class="meter"><div class="lbl"><span>${title} · ${w.percent}%</span><span>resets in ${fmtIn(w.resetsAt - state.now)}</span></div>
+    <div class="track"><div class="fill ${cls}" style="width:${w.percent}%"></div><div class="line" style="left:${t}%"></div></div>
+    <input type="range" min="0" max="100" value="${w.percent}" data-set="${a.id}" data-key="${key}" aria-label="${a.label} ${title}"></div>`
+}
+
+function render() {
+  el('clock').textContent = fmt(state.now)
+  el('enabled').checked = state.settings.enabled
+  el('threshold').value = state.settings.threshold
+  el('margin').value = state.settings.marginPoints
+  el('cooldown').value = state.settings.cooldownMinutes
+  const v = state.verdict ?? { kind: 'hold', reason: 'under-line', used: AutoSwitchPolicy.usedPercent(state.accounts.find((a) => a.id === state.activeId)) }
+  const [what, why] = explain(v)
+  el('verdict').className = `panel verdict ${v.kind}`
+  el('verdict').innerHTML = `<div class="what">${what}</div><div style="color:var(--muted)">${why}</div>`
+  el('accounts').innerHTML = state.accounts.map((a) => `
+    <div class="panel acct ${a.id === state.activeId ? 'active' : ''} ${state.changed.has(a.id) ? 'changed' : ''}">
+      <div><span class="name">${a.label}</span>${a.id === state.activeId ? '<span class="badge">Active</span>' : ''}${a.inRotation ? '' : '<span class="badge out">Out of rotation</span>'}${a.signIn === 'ok' ? '' : `<span class="badge bad">${a.signIn === 'expired' ? 'Sign-in expired' : 'Usage unknown'}</span>`}</div>
+      ${a.usage ? meter(a, 'fiveHour', '5-hour') + meter(a, 'sevenDay', 'Weekly') : ''}
+      <div class="controls">
+        <button data-use="${a.id}" data-points="5">Use 5%</button><button data-use="${a.id}" data-points="25">Use 25%</button>
+        <button data-pick="${a.id}" ${a.id === state.activeId ? 'disabled' : ''}>Switch here by hand</button>
+        <button data-rotation="${a.id}">${a.inRotation ? 'Take out of rotation' : 'Put back in rotation'}</button>
+        <select data-signin="${a.id}" aria-label="${a.label} sign-in">
+          ${[['ok', 'Signed in'], ['expired', 'Sign-in expired'], ['unknown', 'Usage unknown']].map(([val, txt]) => `<option value="${val}" ${a.signIn === val ? 'selected' : ''}>${txt}</option>`).join('')}
+        </select>
+      </div>
+    </div>`).join('')
+  el('log').innerHTML = state.log.map((l) => `<div><time>${fmt(l.at)}</time><span class="${l.cls}">${l.text}</span></div>`).join('') || '<span style="color:var(--muted)">Nothing yet. Press a button.</span>'
+  renderScenario()
+}
+
+// ---- Guided walkthroughs ----
+const scenarios = [
+  { title: 'Happy path', text: 'Work is getting close to its limit. Personal has the most room. Watch Orca move before the limit, not after it.',
+    setup: () => freshState(),
+    steps: [['Work uses 25% more', () => actions.use('work', 25)], ['Work uses 5% more (crosses 90%)', () => actions.use('work', 5)], ['An hour passes', () => actions.advance(60)]] },
+  { title: 'Two accounts near the line', text: 'Work and Team both hover around 90%. Without a margin they would trade places every check. Watch it hold instead.',
+    setup: () => freshState([account('work', 'Work Max', [91, 120], [40, 4000]), account('team', 'Team Pro', [86, 100], [50, 3000])]),
+    steps: [['Check now', () => actions.advance(1)], ['Set the margin to 0 points', () => actions.setting('marginPoints', 0)], ['Team uses 5% (now over the line)', () => actions.use('team', 5)], ['Five minutes pass', () => actions.advance(5)]] },
+  { title: 'Everyone nearly out', text: 'All three accounts are over 90%. Personal resets in 12 minutes, the others in hours. Burning Personal first wastes nothing.',
+    setup: () => freshState([account('work', 'Work Max', [95, 180], [60, 4000]), account('personal', 'Personal Max', [93, 12], [50, 5000]), account('team', 'Team Pro', [96, 240], [70, 2000])]),
+    steps: [['Check now', () => actions.advance(1)], ['Personal uses its last 7%', () => actions.use('personal', 7)], ['Fifteen minutes pass', () => actions.advance(15)]] },
+  { title: 'Dead sign-in', text: 'Personal has the most room, but its sign-in has expired. Switching there would stop the agent. Watch it pick Team instead.',
+    setup: () => { const s = freshState(); s.accounts[1].signIn = 'expired'; return s },
+    steps: [['Work uses 25% more', () => actions.use('work', 25)], ['Work crosses the line', () => actions.use('work', 5)]] },
+  { title: 'Your pick wins', text: 'You switch to Team by hand while it is at 92%. Orca should not yank it away the next minute. After the cooldown, it moves on.',
+    setup: () => freshState([account('work', 'Work Max', [30, 120], [20, 4000]), account('personal', 'Personal Max', [10, 200], [15, 6000]), account('team', 'Team Pro', [92, 90], [70, 2000])]),
+    steps: [['Switch to Team by hand', () => actions.pick('team')], ['Two minutes pass', () => actions.advance(2)], ['Three more minutes pass', () => actions.advance(3)]] },
+  { title: 'Hard limit, no one left', text: 'Every account is at 100%. Orca can only wait. It should name the first account back and switch the minute it resets.',
+    setup: () => freshState([account('work', 'Work Max', [100, 200], [80, 4000]), account('personal', 'Personal Max', [100, 25], [60, 5000]), account('team', 'Team Pro', [100, 140], [90, 2000])]),
+    steps: [['Check now', () => actions.advance(1)], ['Twenty-five minutes pass', () => actions.advance(25)]] },
+  { title: 'Out of rotation', text: 'Personal is a work-only account you never want touched. It has the most room, but it is out of rotation.',
+    setup: () => { const s = freshState(); s.accounts[1].inRotation = false; s.accounts[1].usage.fiveHour.percent = 0; return s },
+    steps: [['Work uses 30% more', () => actions.use('work', 30)]] },
+  { title: 'No bouncing back', text: 'Orca leaves Work for Personal. Personal fills up fast while Work is still over the line. It must not go back to Work while Personal still runs; only a hard stop justifies it.',
+    setup: () => freshState([account('work', 'Work Max', [88, 240], [40, 4000]), account('personal', 'Personal Max', [60, 200], [35, 6000])]),
+    steps: [['Work crosses the line', () => actions.use('work', 5)], ['Personal uses 25%', () => actions.use('personal', 25)], ['Personal uses 5% more (crosses)', () => actions.use('personal', 5)], ['Ten minutes pass', () => actions.advance(10)], ['Personal hits its limit', () => actions.use('personal', 25)]] },
+]
+
+let current = 0, stepIndex = 0
+function startScenario(i) { current = i; stepIndex = 0; state = scenarios[i].setup(); log(`Started "${scenarios[i].title}".`); render() }
+function renderScenario() {
+  el('tabs').innerHTML = scenarios.map((s, i) => `<button class="${i === current ? 'on' : ''}" data-tab="${i}">${s.title}</button>`).join('')
+  const s = scenarios[current]
+  el('scenario').innerHTML = `<p>${s.text}</p><div class="steps">${s.steps.map(([label], i) =>
+    `<button data-step="${i}" class="${i < stepIndex ? 'done' : i === stepIndex ? 'next primary' : ''}">${i + 1}. ${label}</button>`).join('')}
+    <button data-tab="${current}" style="margin-top:6px">Restart this walkthrough</button></div>`
+}
+
+document.addEventListener('click', (e) => {
+  const t = e.target.closest('button'); if (!t) return
+  const d = t.dataset
+  if (d.tab !== undefined) return startScenario(+d.tab)
+  if (d.step !== undefined) { const i = +d.step; act(scenarios[current].steps[i][1]); stepIndex = i + 1; return renderScenario() }
+  if (d.advance) return act(() => actions.advance(+d.advance))
+  if (d.use) return act(() => actions.use(d.use, +d.points))
+  if (d.pick) return act(() => actions.pick(d.pick))
+  if (d.rotation) return act(() => actions.rotation(d.rotation))
+  if (t.id === 'reset') return startScenario(current)
+})
+document.addEventListener('change', (e) => {
+  const t = e.target, d = t.dataset
+  if (d.signin) return act(() => actions.signIn(d.signin, t.value))
+  if (t.id === 'enabled') return act(() => actions.setting('enabled', t.checked))
+  if (t.id === 'threshold') return act(() => actions.setting('threshold', +t.value))
+  if (t.id === 'margin') return act(() => actions.setting('marginPoints', +t.value))
+  if (t.id === 'cooldown') return act(() => actions.setting('cooldownMinutes', +t.value))
+  if (d.set) return act(() => actions.set(d.set, d.key, +t.value))
+})
+
+startScenario(0)
+</script>
+</body>
+</html>
