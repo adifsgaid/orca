@@ -96,7 +96,6 @@
   .log .t { font-family: var(--font-mono); color: var(--muted); font-variant-numeric: tabular-nums; }
   .log .cmd { font-family: var(--font-mono); font-size: 0.82em; }
   .rules { display: grid; gap: 6px; font-size: 0.88rem; padding-left: 1.1em; margin: 0; }
-  label.check { display: flex; gap: 8px; align-items: center; font-size: 0.86rem; cursor: pointer; }
   @media (prefers-reduced-motion: no-preference) { .pane { transition: background-color 0.6s ease; } }
 </style>
 
@@ -132,11 +131,10 @@
             <button type="button" data-mode="ask">Ask me</button>
             <button type="button" data-mode="auto">Move them</button>
           </div></div>
-        <label class="check"><input type="checkbox" id="type-continue"> After a move, type "continue" for me</label>
         <div class="row"><span class="label">New pane</span>
           <button class="btn" type="button" data-act="open" data-provider="claude">Start a Claude</button>
           <button class="btn" type="button" data-act="open" data-provider="codex">Start a Codex</button></div>
-        <p style="font-size:0.84rem;color:var(--muted)">Each pane on the right has its own buttons: send a message, let the turn end, ask permission, leave text unsent.</p>
+        <p style="font-size:0.84rem;color:var(--muted)">Each pane on the right has its own buttons: send a message, let the turn end, let it hit the limit, ask permission, leave text unsent.</p>
       </section>
 
       <section class="panel" aria-labelledby="rules-h">
@@ -147,9 +145,10 @@
           <li>Unsent text in the prompt holds the move, so it can't eat what you were typing.</li>
           <li>No session id (status hooks off) means it can't reopen that conversation, so it stays put. It's never restarted blank.</li>
           <li>"Ask me" works like Codex's prompt today: you approve once, then each pane moves when it's idle.</li>
+          <li>Orca types "continue" only for a pane whose turn died on the usage limit, so cut-off work picks up by itself. A pane that finished normally just waits for you.</li>
           <li>Claude and Codex are independent: switching one never touches the other's panes.</li>
         </ol>
-        <p style="font-size:0.84rem;color:var(--muted)">Assumes Orca records which account each Claude pane started on (it already does for Codex), and that it can tell when a prompt holds unsent text. Both are open questions.</p>
+        <p style="font-size:0.84rem;color:var(--muted)">Assumes Orca records which account each Claude pane started on (it already does for Codex) and that it can tell when a prompt holds unsent text; both are open questions. It can already tell a turn that died on an error: Claude sends a StopFailure event with the error type.</p>
       </section>
     </div>
 
@@ -194,17 +193,18 @@ const ResumeOnSwitch = (() => {
       if (holdReason(state, pane) !== null) return pane
       const to = state.selected[pane.provider]
       log.push({ text: `${pane.name} reopened its conversation on ${to}`, cmd: RESUME[pane.provider](pane.session) })
-      const moved = { ...pane, account: to, approved: false, moves: pane.moves + 1 }
-      if (!state.typeContinue) return moved
-      log.push({ text: `${pane.name}: Orca typed "continue", so it started working without you` })
+      const moved = { ...pane, account: to, approved: false, moves: pane.moves + 1, cutOff: false }
+      if (!pane.cutOff) return moved
+      log.push({ text: `${pane.name}: its last turn died on the limit, so Orca typed "continue" and it picks up where it stopped` })
       return { ...moved, status: 'thinking' }
     })
     return { ...state, panes }
   }
 
   const PANE_CHANGES = {
-    send: (p) => ({ ...p, status: 'thinking', draft: false }),
-    turnEnds: (p) => ({ ...p, status: 'idle' }),
+    send: (p) => ({ ...p, status: 'thinking', draft: false, cutOff: false }),
+    turnEnds: (p) => ({ ...p, status: 'idle', cutOff: false }),
+    hitsLimit: (p) => ({ ...p, status: 'idle', cutOff: true }),
     asks: (p) => ({ ...p, status: 'asking' }),
     answer: (p) => ({ ...p, status: 'thinking' }),
     draft: (p) => ({ ...p, draft: true }),
@@ -212,6 +212,7 @@ const ResumeOnSwitch = (() => {
   }
   const PANE_TEXT = {
     send: 'you sent a message, it is thinking', turnEnds: 'its turn ended, idle at the prompt',
+    hitsLimit: 'its turn died on the usage limit (StopFailure)',
     asks: 'it is asking you for permission', answer: 'you answered, it is thinking again',
     draft: 'you typed something but did not send it', clearDraft: 'you cleared the unsent text'
   }
@@ -237,12 +238,9 @@ const ResumeOnSwitch = (() => {
     } else if (action.type === 'mode') {
       next = { ...state, mode: action.mode, prompt: null }
       log.push({ text: `Open sessions: ${{ off: 'leave them', ask: 'ask me', auto: 'move them' }[action.mode]}` })
-    } else if (action.type === 'typeContinue') {
-      next = { ...state, typeContinue: action.on }
-      log.push({ text: action.on ? 'Orca will type "continue" after a move' : 'Orca will not type anything after a move' })
     } else if (action.type === 'open') {
       const n = state.panes.length + 1
-      const pane = { id: n, name: `Pane ${n}`, provider: action.provider, account: state.selected[action.provider], status: 'idle', session: sessionId(n), draft: false, approved: false, moves: 0 }
+      const pane = { id: n, name: `Pane ${n}`, provider: action.provider, account: state.selected[action.provider], status: 'idle', session: sessionId(n), draft: false, cutOff: false, approved: false, moves: 0 }
       next = { ...state, panes: [...state.panes, pane] }
       log.push({ text: `${pane.name}: new ${PROVIDER[action.provider]} started on ${pane.account}` })
     } else if (action.type === 'pane') {
@@ -260,11 +258,11 @@ const ResumeOnSwitch = (() => {
   function sessionId(n) { return ['7f3c9a', 'b21e04', '5d90c7', 'e48a1f', '0c6b33', '9a17d2', '3fe820', 'c5d4a9'][(n - 1) % 8] }
 
   function pane(id, provider, account, status, extra = {}) {
-    return { id, name: `Pane ${id}`, provider, account, status, session: sessionId(id), draft: false, approved: false, moves: 0, ...extra }
+    return { id, name: `Pane ${id}`, provider, account, status, session: sessionId(id), draft: false, cutOff: false, approved: false, moves: 0, ...extra }
   }
 
-  function initial({ mode = 'auto', typeContinue = false, selected = { claude: 'A', codex: 'X' }, panes = [] } = {}) {
-    return { selected, mode, typeContinue, prompt: null, panes, log: [], step: 0 }
+  function initial({ mode = 'auto', selected = { claude: 'A', codex: 'X' }, panes = [] } = {}) {
+    return { selected, mode, prompt: null, panes, log: [], step: 0 }
   }
 
   function note(state, p) {
@@ -310,10 +308,10 @@ const SCENARIOS = [
     watch: 'After you approve, the idle pane moves now and the busy one waits for its turn to end.',
     setup: () => ResumeOnSwitch.initial({ mode: 'ask', panes: [P(1, 'claude', 'A', 'idle'), P(2, 'claude', 'A', 'thinking')] }),
     steps: [['Switch Claude to B', { type: 'select', provider: 'claude', account: 'B' }], ['Answer the prompt: move them', { type: 'approve' }], ['Pane 2 finishes its turn', { type: 'pane', id: 2, change: 'turnEnds' }]] },
-  { title: 'Typing "continue"', desc: 'Option on: after a move, Orca types "continue". The pane was idle because you were reading its answer.',
-    watch: 'It starts working on its own after the move. Is that what you want?',
-    setup: () => ResumeOnSwitch.initial({ typeContinue: true, panes: [P(1, 'claude', 'A', 'idle')] }),
-    steps: [['Switch Claude to B', { type: 'select', provider: 'claude', account: 'B' }]] },
+  { title: 'Long run hits the limit', desc: 'Pane 1 is in a long agent run on A. Pane 2 finished earlier and you are reading its answer. A passes 90% and Orca switches to B, but the run keeps going and burns the rest of A.',
+    watch: 'Pane 2 moves and waits for you. Pane 1 keeps working on A, dies on the limit, moves to B and continues by itself, like claude-swap.',
+    setup: () => ResumeOnSwitch.initial({ panes: [P(1, 'claude', 'A', 'thinking'), P(2, 'claude', 'A', 'idle')] }),
+    steps: [['A passes 90%: Orca switches Claude to B', { type: 'select', provider: 'claude', account: 'B', why: 'automatic' }], ["Pane 1's run hits A's limit", { type: 'pane', id: 1, change: 'hitsLimit' }]] },
   { title: 'Codex too', desc: 'One Claude pane and two Codex panes. The Codex account switches from X to Y.',
     watch: 'Only Codex panes move, with codex resume. The Claude pane is untouched.',
     setup: () => ResumeOnSwitch.initial({ panes: [P(1, 'claude', 'A', 'idle'), P(2, 'codex', 'X', 'idle'), P(3, 'codex', 'X', 'thinking')] }),
@@ -348,15 +346,15 @@ function render() {
 
   $('panes').innerHTML = state.panes.map((p) => {
     const before = previous && previous.panes.find((q) => q.id === p.id)
-    const changed = before && (before.account !== p.account || before.status !== p.status || before.draft !== p.draft)
+    const changed = before && (before.account !== p.account || before.status !== p.status || before.draft !== p.draft || before.cutOff !== p.cutOff)
     const behind = ResumeOnSwitch.isBehind(state, p)
     const statusText = { thinking: 'thinking', asking: 'asking permission', idle: 'idle at the prompt' }[p.status]
     const buttons = p.status === 'idle'
       ? [['send', 'Send a message'], p.draft ? ['clearDraft', 'Clear unsent text'] : ['draft', 'Type without sending']]
-      : p.status === 'thinking' ? [['turnEnds', 'Turn ends'], ['asks', 'Asks permission']] : [['answer', 'Answer it']]
+      : p.status === 'thinking' ? [['turnEnds', 'Turn ends'], ['hitsLimit', 'Hits the limit'], ['asks', 'Asks permission']] : [['answer', 'Answer it']]
     return `<article class="pane ${changed ? 'changed' : ''}">
       <div class="head"><span class="name">${esc(p.name)}</span><span class="prov">${ResumeOnSwitch.PROVIDER[p.provider]}</span></div>
-      <div class="row"><span class="pill ${p.status}">${statusText}</span>${p.draft ? '<span class="chip">unsent text</span>' : ''}</div>
+      <div class="row"><span class="pill ${p.status}">${statusText}</span>${p.draft ? '<span class="chip">unsent text</span>' : ''}${p.cutOff ? '<span class="chip">stopped by the limit</span>' : ''}</div>
       <dl class="facts"><dt>Account</dt><dd><span class="chip ${behind ? '' : 'on'}">${p.account}</span></dd>
         <dt>Session</dt><dd class="mono">${p.session ?? 'unknown'}</dd></dl>
       <p class="note ${behind ? 'behind' : ''}">${esc(ResumeOnSwitch.note(state, p))}</p>
@@ -369,7 +367,6 @@ function render() {
     : '<div><span class="t">-</span><span style="color:var(--muted)">Nothing yet. Press step 1.</span></div>'
 
   document.querySelectorAll('#mode button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.mode === state.mode)))
-  $('type-continue').checked = state.typeContinue
 }
 
 document.addEventListener('click', (event) => {
@@ -385,7 +382,6 @@ document.addEventListener('click', (event) => {
   if (el.dataset.act === 'approve') return dispatch({ type: 'approve' })
   if (el.dataset.act === 'dismiss') return dispatch({ type: 'dismiss' })
 })
-$('type-continue').addEventListener('change', (e) => dispatch({ type: 'typeContinue', on: e.target.checked }))
 
 startScenario(0)
 </script>
