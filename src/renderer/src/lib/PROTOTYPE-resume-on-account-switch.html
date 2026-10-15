@@ -1,7 +1,7 @@
 <title>Resume on Account Switch</title>
 <meta name="claude:viewport-fit-sides" content="cover">
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
 <style>
   /* Layout: a control column (walkthroughs, then free play) beside a live board of agent panes; one column on a phone. */
   :root {
@@ -19,7 +19,7 @@
     --idle: #2a7a3b;
     --idle-soft: #e5f3e8;
     --flash: #fff6c9;
-    --font-ui: "Instrument Sans", "Segoe UI", system-ui, sans-serif;
+    --font-ui: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
     --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
   }
   @media (prefers-color-scheme: dark) {
@@ -61,7 +61,7 @@
   .step:disabled { cursor: default; opacity: 0.45; }
   .step.done { opacity: 0.6; text-decoration: line-through; text-decoration-color: var(--muted); }
   .step.next { border-color: var(--accent); background: var(--accent-soft); }
-  .watch { font-size: 0.88rem; color: var(--muted); border-left: 3px solid var(--accent); padding-left: 10px; }
+  .watch { font-size: 0.88rem; color: var(--ink); background: var(--accent-soft); border-radius: 8px; padding: 8px 10px; }
   .row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
   .btn { font: inherit; font-size: 0.84rem; border: 1px solid var(--line); background: var(--surface); color: var(--ink); border-radius: 7px; padding: 5px 10px; cursor: pointer; }
   .btn:hover { border-color: var(--accent); }
