@@ -120,8 +120,7 @@ export function createClaudeAccountAutoSwitch(
       .autoSelectAccountForTarget(to.id, target, stillWanted)
       .then((switched) => {
         if (switched) {
-          // Why the account's own runtime: with the default WSL distro the usage target names no
-          // distro, but the panes on those accounts sit in the account's distro's lane.
+          // Why not the usage target: a default-distro target names no distro; panes do.
           deps.onSwitched({
             accounts: deps.accounts.listAccounts().accounts,
             from,
