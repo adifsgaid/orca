@@ -1,9 +1,9 @@
-import { normalizeJiraQuickFilterState } from '../../../../shared/jira-quick-filters'
+import { normalizeJiraQuickFilterState } from '../../../../shared/jira/jira-quick-filters'
 import { JiraQuickFilterStateParam } from '../../../../shared/rpc-contract/jira-quick-filter-params'
 import {
   normalizeJiraSavedFilterState,
   mutateJiraSavedFilterState
-} from '../../../../shared/jira-saved-filters'
+} from '../../../../shared/jira/jira-saved-filters'
 import { JiraSavedFilterMutationParam } from '../../../../shared/rpc-contract/jira-saved-filter-params'
 import {
   omitPairingLocalUiFields,
@@ -17,13 +17,19 @@ import {
   PRBotAuthorOverrideUpdate,
   SettingsUpdate
 } from '../../../../shared/rpc-contract/client-settings-params'
-import { FeatureInteractionIdParam, UiUpdate } from './client-ui-schemas'
+import {
+  FeatureInteractionIdParam,
+  UiUpdate
+} from '../../../../shared/rpc-contract/client-ui-params'
 // Type-only side effect: keeps the schema/PersistedUIState parity assertions in
 // the typecheck graph so drift fails the build instead of a paired client.
 
 import { TerminalQuickCommandsUpdate } from '../../../../shared/rpc-contract/terminal-quick-command-params'
 import { AgentLaunchSettingsMutation } from '../../../../shared/rpc-contract/agent-launch-settings-params'
-import { projectTerminalQuickCommandsForClient } from './terminal-quick-command-long-prompt-capability'
+import {
+  assertTerminalQuickCommandMutationReadableForClient,
+  projectTerminalQuickCommandsForClient
+} from './terminal-quick-command-client-capabilities'
 
 function uiForCaller(
   state: PersistedUIState,
@@ -117,12 +123,19 @@ export const CLIENT_UI_METHODS = [
     name: 'settings.updateTerminalQuickCommands',
     permission: 'settings-write',
     params: TerminalQuickCommandsUpdate,
-    handler: (params, ctx) => ({
-      terminalQuickCommands: projectTerminalQuickCommandsForClient(
-        ctx.runtime.updateClientTerminalQuickCommands(params.mutation),
+    handler: (params, ctx) => {
+      assertTerminalQuickCommandMutationReadableForClient(
+        ctx.runtime.getClientTerminalQuickCommands(),
+        params.mutation,
         ctx
       )
-    })
+      return {
+        terminalQuickCommands: projectTerminalQuickCommandsForClient(
+          ctx.runtime.updateClientTerminalQuickCommands(params.mutation),
+          ctx
+        )
+      }
+    }
   }),
   defineMethod({
     name: 'settings.updatePRBotAuthorOverride',
