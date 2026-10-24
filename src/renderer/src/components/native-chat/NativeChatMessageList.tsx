@@ -1,5 +1,5 @@
 import {
-  NATIVE_CHAT_TRANSCRIPT_OUTER_CLASS,
+  nativeChatTranscriptOuterClass,
   NATIVE_CHAT_TRANSCRIPT_COLUMN_CLASS
 } from './native-chat-appearance-style'
 import { NativeChatJumpToLatest } from './NativeChatJumpToLatest'
@@ -11,7 +11,7 @@ import { translate } from '@/i18n/i18n'
 import type { NativeChatLiveSession } from './use-native-chat-live-session'
 import { useNativeChatTranscriptProjection } from './use-native-chat-transcript-projection'
 import { structuredQuestionTranscript } from '../../../../shared/structured-agent-question-projection'
-import { nativeChatTaskListPredecessors } from './native-chat-task-list-history'
+import { nativeChatTaskListPredecessors } from '../../../../shared/native-chat-task-list-history'
 import { NativeChatDockedTaskList } from './NativeChatDockedTaskList'
 import { useNativeChatTurnStatus } from './use-native-chat-turn-status'
 import { NativeChatAwaitingInputRow } from './NativeChatAwaitingInputRow'
@@ -200,6 +200,7 @@ export function NativeChatMessageList({
   const { slots: allSlots, liveLine } = useNativeChatTranscriptSlots({
     typography,
     messages: rows,
+    unresolvedRowIds: turnRows.unresolvedRowIds,
     turnKeys,
     liveTurnKey,
     receipts,
@@ -374,12 +375,11 @@ export function NativeChatMessageList({
                 loadingEarlier={loadingEarlier}
               />
             ) : null}
-            <div className={NATIVE_CHAT_TRANSCRIPT_OUTER_CLASS}>
+            <div className={nativeChatTranscriptOuterClass(rail.visible)}>
               <div
                 ref={measureContent}
                 data-native-chat-transcript-column
-                // Why: matches composer width with 5px horizontal inset
-                // on each side so content is slightly narrower than the input box.
+                // Shares the composer's maximum width; rail clearance and the 5px inner inset narrow constrained panes.
                 className={NATIVE_CHAT_TRANSCRIPT_COLUMN_CLASS}
               >
                 <NativeChatTranscriptItems

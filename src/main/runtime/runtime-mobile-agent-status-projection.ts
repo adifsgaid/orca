@@ -1,6 +1,8 @@
 import {
+  AGENT_STATUS_HYDRATE_MAX_AGE_MS,
   AGENT_STATUS_STALE_AFTER_MS,
   agentStatusAuthorityObservedAt,
+  pickHostTurnEnd,
   pickParsedAgentStatusPayload,
   type AgentStatusEntry,
   type AgentStatusIpcPayload
@@ -9,6 +11,64 @@ import type { AgentProviderSessionMetadata } from '../../shared/agent-session-re
 import { terminalTitleBlocksExplicitAgentStatus } from './runtime-worktree-status-projection'
 import type { HookLiveAgentRow } from './runtime-terminal-contracts'
 import type { RuntimePtyWorktreeRecord } from './runtime-terminal-state-records'
+
+function workingHookOwnsIdleTitleInterval(
+  state: AgentStatusEntry['state'],
+  observedAt: number,
+  pty: RuntimePtyWorktreeRecord | null
+): boolean {
+  return (
+    state === 'working' &&
+    pty?.lastAgentStatus === 'idle' &&
+    !terminalTitleBlocksExplicitAgentStatus(pty.lastOscTitle) &&
+    observedAt >
+      Math.max(
+        pty.lastAgentStatusRichInvalidatedAtEpochMs ?? 0,
+        pty.lastAgentStatusStartedAtEpochMs ?? 0
+      ) &&
+    Date.now() - observedAt <= AGENT_STATUS_STALE_AFTER_MS
+  )
+}
+
+// Why: only a completed turn's reply is final; mid-turn hook snapshots carry tool stdout.
+function completedTurnFields(
+  status: AgentStatusEntry
+): Pick<
+  AgentStatusEntry,
+  'lastAssistantMessage' | 'lastAssistantMessageIsToolOutput' | 'interrupted'
+> {
+  if (status.state !== 'done') {
+    return {}
+  }
+  return {
+    ...(status.lastAssistantMessage
+      ? {
+          lastAssistantMessage: status.lastAssistantMessage,
+          ...(status.lastAssistantMessageIsToolOutput != null
+            ? { lastAssistantMessageIsToolOutput: status.lastAssistantMessageIsToolOutput }
+            : {})
+        }
+      : {}),
+    ...(status.interrupted != null ? { interrupted: status.interrupted } : {})
+  }
+}
+
+export function demoteRuntimeMobileAgentStatus(
+  status: AgentStatusEntry,
+  pty: RuntimePtyWorktreeRecord | null
+): AgentStatusEntry {
+  return {
+    state: 'done',
+    prompt: '',
+    updatedAt: pty?.lastOscTitleEpochMs ?? status.updatedAt,
+    stateStartedAt: pty?.lastAgentStatusStartedAtEpochMs ?? status.stateStartedAt,
+    paneKey: status.paneKey,
+    stateHistory: [],
+    agentType: status.agentType,
+    ...completedTurnFields(status),
+    ...(status.providerSession ? { providerSession: status.providerSession } : {})
+  }
+}
 
 export function renewRuntimeMobileAgentStatusFromPtyTitle(
   status: AgentStatusEntry | null,
@@ -57,13 +117,20 @@ export function renewRuntimeMobileAgentStatusFromPtyTitle(
     ...(status.worktreeId ? { worktreeId: status.worktreeId } : {}),
     ...(status.tabId ? { tabId: status.tabId } : {}),
     ...(status.terminalTitle ? { terminalTitle: status.terminalTitle } : {}),
-    ...(status.providerSession ? { providerSession: status.providerSession } : {})
+    ...(status.providerSession ? { providerSession: status.providerSession } : {}),
+    ...(state === 'done' ? completedTurnFields(status) : {})
   })
   const titleConfirmsState =
     (pty.lastAgentStatus === 'working' && status.state === 'working') ||
     (pty.lastAgentStatus === 'permission' &&
       (status.state === 'blocked' || status.state === 'waiting'))
   if (!titleConfirmsState) {
+    // A repaint of the idle interval preceding this hook is not a new turn boundary.
+    if (
+      workingHookOwnsIdleTitleInterval(status.state, agentStatusAuthorityObservedAt(status), pty)
+    ) {
+      return status
+    }
     if (
       richStatusCanOwnTitleInterval &&
       agentStatusAuthorityObservedAt(status) >= titleEvidenceAt
@@ -120,7 +187,7 @@ export type RuntimeHookAgentRowLookup = {
   agentType: string | null
   agentIsLive: boolean
   live: HookLiveAgentRow | null
-  /** Latest fresh nonterminal row hydrated across a host restart: unverifiable, never live. */
+  /** Latest nonterminal row hydrated across a host restart: unverifiable, never live. */
   restored: HookLiveAgentRow | null
 }
 
@@ -132,7 +199,11 @@ export function selectRuntimeHookAgentRowForPane(
   let agent: AgentStatusIpcPayload | null = null
   let live: AgentStatusIpcPayload | null = null
   let restored: AgentStatusIpcPayload | null = null
-  const freshAfter = Date.now() - AGENT_STATUS_STALE_AFTER_MS
+  let confirmedReceivedAt = -Infinity
+  const now = Date.now()
+  const freshAfter = now - AGENT_STATUS_STALE_AFTER_MS
+  // Unverifiable lasts as long as hydration keeps the row; going quiet is not exit evidence.
+  const restoredAfter = now - AGENT_STATUS_HYDRATE_MAX_AGE_MS
   for (const entry of rows) {
     if (entry.providerSession && (!session || entry.receivedAt > session.receivedAt)) {
       session = entry
@@ -145,6 +216,9 @@ export function selectRuntimeHookAgentRowForPane(
       (!agent || entry.receivedAt > agent.receivedAt)
     ) {
       agent = entry
+    }
+    if (entry.providerSessionOnly !== true && entry.restoredUnconfirmed !== true) {
+      confirmedReceivedAt = Math.max(confirmedReceivedAt, entry.receivedAt)
     }
     if (
       entry.providerSessionOnly !== true &&
@@ -159,14 +233,14 @@ export function selectRuntimeHookAgentRowForPane(
       entry.providerSessionOnly !== true &&
       entry.restoredUnconfirmed === true &&
       entry.state !== 'done' &&
-      (entry.evidenceObservedAt ?? entry.receivedAt) >= freshAfter &&
+      (entry.evidenceObservedAt ?? entry.receivedAt) >= restoredAfter &&
       (!restored || entry.receivedAt > restored.receivedAt)
     ) {
       restored = entry
     }
   }
-  // A confirmed row at least as new as the restored one supersedes it.
-  if (restored && live && live.receivedAt >= restored.receivedAt) {
+  // A confirmed row at least as new as the restored one supersedes it, stale or not.
+  if (restored && confirmedReceivedAt >= restored.receivedAt) {
     restored = null
   }
   return {
@@ -186,7 +260,9 @@ function toHookLiveAgentRow(row: AgentStatusIpcPayload): HookLiveAgentRow {
     updatedAt: row.receivedAt,
     ...(row.evidenceObservedAt !== undefined ? { evidenceObservedAt: row.evidenceObservedAt } : {}),
     stateStartedAt: row.stateStartedAt ?? row.receivedAt,
-    ...(row.worktreeId ? { worktreeId: row.worktreeId } : {})
+    ...pickHostTurnEnd(row),
+    ...(row.worktreeId ? { worktreeId: row.worktreeId } : {}),
+    ...(row.programStatus ? { programStatus: row.programStatus } : {})
   }
 }
 
@@ -199,6 +275,11 @@ export function resolveRuntimeHookLiveAgentRow(
     return null
   }
   if (live.payload.interactivePrompt != null) {
+    return live
+  }
+  if (
+    workingHookOwnsIdleTitleInterval(live.payload.state, agentStatusAuthorityObservedAt(live), pty)
+  ) {
     return live
   }
   // This is the pane's only wall-clock title timestamp comparable to when the hook evidence
