@@ -184,12 +184,12 @@ function warnUncheckedSessions(count: number, previous: string): void {
     count === 1
       ? translate(
           'accounts.claude.switchSessions.uncheckedOne',
-          "1 Claude session couldn't be checked and stays on {{previous}}",
+          "Couldn't check 1 terminal for Claude. If Claude is running there, it stays on {{previous}} until restarted.",
           { previous }
         )
       : translate(
           'accounts.claude.switchSessions.uncheckedOther',
-          "{{count}} Claude sessions couldn't be checked and stay on {{previous}}",
+          "Couldn't check {{count}} terminals for Claude. Any Claude running there stays on {{previous}} until restarted.",
           { count, previous }
         )
   )
