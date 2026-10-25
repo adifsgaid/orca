@@ -20793,7 +20793,9 @@
         "settingRestart": "Always restart",
         "settingKeep": "Never restart",
         "restartingOne": "Restarting 1 Claude session on {{account}}",
-        "restartingOther": "Restarting {{count}} Claude sessions on {{account}}"
+        "restartingOther": "Restarting {{count}} Claude sessions on {{account}}",
+        "uncheckedOne": "1 Claude session couldn't be checked and stays on {{previous}}",
+        "uncheckedOther": "{{count}} Claude sessions couldn't be checked and stay on {{previous}}"
       }
     },
     "managedData": {
